@@ -278,7 +278,7 @@ PARENT_INVOCATION
 $pluginInfo = $this->pluginList->getNext($this->subjectType, '%methodName%');
 %parentCall%
 if ($pluginInfo) {
-   %return% $this->___callPlugins('%methodName%', [%parameters%], $pluginInfo, $parentCall ?? null);
+   %return% $this->___callPlugins('%methodName%', [%parameters%], $pluginInfo, $parentCall);
 } %parentInvocation%
 METHOD_BODY
         );

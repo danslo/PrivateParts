@@ -76,7 +76,7 @@ trait Interceptor
         }
     }
 
-    protected function ___callPlugins($method, array $arguments, array $pluginInfo, $parentCall = null)
+    protected function ___callPlugins($method, array $arguments, array $pluginInfo, callable $parentCall)
     {
         $subject = $this;
         $type = $this->subjectType;
@@ -117,11 +117,7 @@ trait Interceptor
                 $result = $pluginInstance->$pluginMethod($subject, $next, ...array_values($arguments));
             } else {
                 // Call original method
-                if ($parentCall !== null) {
-                    $result = $parentCall(...$arguments);
-                } else {
-                    $result = $subject->___callParent($method, $arguments);
-                }
+                $result = $parentCall(...$arguments);
             }
 
             if (isset($currentPluginInfo[DefinitionInterface::LISTENER_AFTER])) {

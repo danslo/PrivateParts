@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Danslo\ProtectedInterceptors\Interception;
 
+use Magento\Framework\Interception\DefinitionInterface;
+
 trait Interceptor
 {
     use \Magento\Framework\Interception\Interceptor;
@@ -72,5 +74,71 @@ trait Interceptor
         } catch (\ReflectionException $e) {
             return $this->$propertyName;
         }
+    }
+
+    protected function ___callPlugins($method, array $arguments, array $pluginInfo, $parentCall = null)
+    {
+        $subject = $this;
+        $type = $this->subjectType;
+        $pluginList = $this->pluginList;
+
+        $next = function (...$arguments) use (
+            $method,
+            &$pluginInfo,
+            $subject,
+            $type,
+            $pluginList,
+            &$next,
+            $parentCall
+        ) {
+            $capMethod = ucfirst($method);
+            $currentPluginInfo = $pluginInfo;
+            $result = null;
+
+            if (isset($currentPluginInfo[DefinitionInterface::LISTENER_BEFORE])) {
+                // Call 'before' listeners
+                foreach ($currentPluginInfo[DefinitionInterface::LISTENER_BEFORE] as $code) {
+                    $pluginInstance = $pluginList->getPlugin($type, $code);
+                    $pluginMethod = 'before' . $capMethod;
+                    $beforeResult = $pluginInstance->$pluginMethod($this, ...array_values($arguments));
+
+                    if ($beforeResult !== null) {
+                        $arguments = (array)$beforeResult;
+                    }
+                }
+            }
+
+            if (isset($currentPluginInfo[DefinitionInterface::LISTENER_AROUND])) {
+                // Call 'around' listener
+                $code = $currentPluginInfo[DefinitionInterface::LISTENER_AROUND];
+                $pluginInfo = $pluginList->getNext($type, $method, $code);
+                $pluginInstance = $pluginList->getPlugin($type, $code);
+                $pluginMethod = 'around' . $capMethod;
+                $result = $pluginInstance->$pluginMethod($subject, $next, ...array_values($arguments));
+            } else {
+                // Call original method
+                if ($parentCall !== null) {
+                    $result = $parentCall(...$arguments);
+                } else {
+                    $result = $subject->___callParent($method, $arguments);
+                }
+            }
+
+            if (isset($currentPluginInfo[DefinitionInterface::LISTENER_AFTER])) {
+                // Call 'after' listeners
+                foreach ($currentPluginInfo[DefinitionInterface::LISTENER_AFTER] as $code) {
+                    $pluginInstance = $pluginList->getPlugin($type, $code);
+                    $pluginMethod = 'after' . $capMethod;
+                    $result = $pluginInstance->$pluginMethod($subject, $result, ...array_values($arguments));
+                }
+            }
+
+            return $result;
+        };
+
+        $result = $next(...array_values($arguments));
+        $next = null;
+
+        return $result;
     }
 }

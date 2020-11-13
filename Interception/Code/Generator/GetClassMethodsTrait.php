@@ -200,47 +200,55 @@ trait GetClassMethodsTrait
         }, $nodes));
     }
 
-    private function getParentCall(ReflectionMethod $method, array $parameters): string
+    private function indent(string $code, int $numSpaces): string
     {
-        /**
-         * Private methods can never be called directly, so we don't need to generate code to call parent.
-         * For pluginized private methods, this is handled by ___callParent.
-         */
-        if ($method->isPrivate()) {
-            return '';
-        }
-
-        return str_replace(
-            ['%return%', '%methodName%', '%paramters%'],
-            [$this->getReturnType($method), $method->getName(), $this->_getParameterList($parameters)],
-            <<<'PARENT_CALL'
-else {
-   %return% parent::%methodName%(%parameters%);
-}
-PARENT_CALL
-        );
+        $indentation = str_repeat(' ', $numSpaces);
+        return implode("\n", array_map(function (string $str) use ($indentation) {
+            return $indentation . $str;
+        }, explode("\n", $code)));
     }
 
-    private function getInlineCall(ReflectionMethod $method, \ReflectionClass $class): string
+    private function getParentCall(ReflectionMethod $method, ReflectionClass $class, array $parameters): string
     {
+        $parameterList = $this->_getParameterList($parameters);
+        $parentCall = str_replace(
+            ['%return%', '%methodName%', '%parameters%'],
+            [$this->getReturnType($method), $method->getName(), $parameterList],
+            '%return% $this->___callParent(\'%methodName%\', [%parameters%]);'
+        );
+
         $methodCalls = $this->getPrivateMethodCalls($class, $method->getName());
 
-        /**
-         * We don't know if the method should be called inline until runtime...
-         * However, if the method has no private method calls at all, we can skip the check entirely.
-         */
-        if (empty($methodCalls)) {
-            return '';
+        if (!empty($methodCalls)) {
+            $inlineCall = str_replace(
+                ['%methodCalls%', '%methodBody%'],
+                [$methodCalls, $this->indent($this->getMethodBody($class, $method), 4)],
+                <<<'INLINE_CALL'
+if ($this->___isInlineCall([%methodCalls%])) {
+%methodBody%
+}
+INLINE_CALL
+            );
+
+            $parentCall = str_replace(
+                ['%inlineCall%', '%parentCall%'],
+                [$inlineCall, $parentCall],
+                <<<'PARENT_CALL'
+%inlineCall% else {
+   %parentCall%
+}
+PARENT_CALL
+            );
         }
 
         return str_replace(
-            ['%methodCalls%', '%methodBody%'],
-            [$methodCalls, $this->getMethodBody($class, $method)],
-            <<<'INLINE_CALL'
-elseif ($this->___isInlineCall([%methodCalls%])) {
-    %methodBody%
-}
-INLINE_CALL
+            ['%parentCall%', '%parameters%'],
+            [$this->indent($parentCall, 4), $parameterList],
+            <<<'PARENT_CALL'
+$parentCall = function (%parameters%) {
+%parentCall%
+};
+PARENT_CALL
         );
     }
 
@@ -249,26 +257,29 @@ INLINE_CALL
         ReflectionClass $class,
         array $parameters
     ): string {
+        $return = $this->getReturnType($method);
+        $parameterList = $this->_getParameterList($parameters);
+        $parentCall = $this->getParentCall($method, $class, $parameters);
+        $parentInvocation =
+            str_replace(
+                ['%return%', '%parameters%'],
+                [$return, $parameterList],
+                <<<'PARENT_INVOCATION'
+else {
+   %return% $parentCall(%parameters%);
+}
+PARENT_INVOCATION
+            );
+
         return str_replace(
-            [
-                '%parentCall%',
-                '%inlineCall%',
-                '%methodName%',
-                '%return%',
-                '%parameters%'
-            ],
-            [
-                $this->getParentCall($method, $parameters),
-                $this->getInlineCall($method, $class),
-                $method->getName(),
-                $this->getReturnType($method),
-                $this->_getParameterList($parameters),
-            ],
+            ['%return%', '%parentCall%', '%parentInvocation%', '%methodName%', '%parameters%'],
+            [$return, $parentCall, $parentInvocation, $method->getName(), $parameterList],
             <<<'METHOD_BODY'
 $pluginInfo = $this->pluginList->getNext($this->subjectType, '%methodName%');
+%parentCall%
 if ($pluginInfo) {
-   %return% $this->___callPlugins('%methodName%', func_get_args(), $pluginInfo);
-} %inlineCall% %parentCall%
+   %return% $this->___callPlugins('%methodName%', [%parameters%], $pluginInfo, $parentCall ?? null);
+} %parentInvocation%
 METHOD_BODY
         );
     }

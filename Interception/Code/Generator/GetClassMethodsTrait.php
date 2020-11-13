@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Danslo\ProtectedInterceptors\Interception\Code\Generator;
 
 use Magento\Customer\Model\ResourceModel\CustomerRepository;
+use Magento\Framework\Code\Generator\EntityAbstract;
+use Magento\Framework\Interception\InterceptorInterface;
 use PhpParser\Node;
 use PhpParser\Node\Expr\MethodCall;
 use PhpParser\Node\Expr\Variable;
@@ -19,21 +21,15 @@ trait GetClassMethodsTrait
 {
     private $parsedFiles = [];
     private $useStatements = [];
+    private $nodeFinder = null;
 
     private $ignores = [
         CustomerRepository::class => ['addFilterGroupToCollection']
     ];
 
-    protected function isInterceptedMethod(\ReflectionMethod $method)
+    protected function isInterceptedMethod(ReflectionMethod $method)
     {
         return parent::isInterceptedMethod($method) && !in_array($method->getName(), ['__get', '__set']);
-    }
-
-    protected function _getClassProperties()
-    {
-        $properties = parent::_getClassProperties();
-        $properties[] = ['name' => 'parentReflector'];
-        return $properties;
     }
 
     protected function _getDefaultConstructorDefinition()
@@ -47,7 +43,22 @@ trait GetClassMethodsTrait
     {
         // TODO: Can we do this more cleanly?
         $this->_classGenerator->addUse('%USE_IMPORTS%');
-        $code = parent::_generateCode();
+
+        $typeName = $this->getSourceClassName();
+        $reflection = new \ReflectionClass($typeName);
+
+        $interfaces = [];
+        if ($reflection->isInterface()) {
+            $interfaces[] = $typeName;
+        } else {
+            $this->_classGenerator->setExtendedClass($typeName);
+        }
+        $this->_classGenerator->addTrait('\\' . \Danslo\ProtectedInterceptors\Interception\Interceptor::class);
+        $interfaces[] = '\\' . InterceptorInterface::class;
+        $this->_classGenerator->setImplementedInterfaces($interfaces);
+
+        $code = EntityAbstract::_generateCode(); // yuck
+
         $code = str_replace(
             'use %USE_IMPORTS%;',
             implode("\n", array_unique($this->useStatements[$this->getSourceClassName()] ?? [])),
@@ -60,23 +71,31 @@ trait GetClassMethodsTrait
     protected function _getClassMethods()
     {
         $methods = [$this->_getDefaultConstructorDefinition()];
-        $reflectionClass = new ReflectionClass($this->getSourceClassName());
-        $methodFilter = \ReflectionMethod::IS_PUBLIC;
+        $class = new ReflectionClass($this->getSourceClassName());
+        $methodFilter = ReflectionMethod::IS_PUBLIC;
 
         // Working around a circular dependency issue for this specific class.
         if (strpos($this->getSourceClassName(), '\Magento\Store\Model\ResourceModel') !== 0) {
-            $methodFilter |= \ReflectionMethod::IS_PROTECTED;
-            $methodFilter |= \ReflectionMethod::IS_PRIVATE;
+            $methodFilter |= ReflectionMethod::IS_PROTECTED;
+            $methodFilter |= ReflectionMethod::IS_PRIVATE;
         }
 
-        $interceptedMethods = $reflectionClass->getMethods($methodFilter);
+        $interceptedMethods = $class->getMethods($methodFilter);
         foreach ($interceptedMethods as $method) {
             if ($this->isInterceptedMethod($method) && !$this->isIgnoredMethod($method)) {
-                $methods[] = $this->_getMethodInfo($method, $reflectionClass);
+                $methods[] = $this->_getMethodInfo($method, $class);
             }
         }
 
-        return array_merge($methods, $this->getSpecialMethods());
+        return $methods;
+    }
+
+    private function getNodeFinder(): NodeFinder
+    {
+        if ($this->nodeFinder === null) {
+            $this->nodeFinder = new NodeFinder();
+        }
+        return $this->nodeFinder;
     }
 
     private function isIgnoredMethod(ReflectionMethod $method): bool
@@ -88,7 +107,7 @@ trait GetClassMethodsTrait
         return in_array($method->getName(), $this->ignores[$method->getDeclaringClass()->getName()], true);
     }
 
-    private function getReturnTypeValue(\ReflectionMethod $method): ?string
+    private function getReturnTypeValue(ReflectionMethod $method): ?string
     {
         $returnTypeValue = null;
         $returnType = $method->getReturnType();
@@ -102,37 +121,35 @@ trait GetClassMethodsTrait
         return $returnTypeValue;
     }
 
-    private function getFileStmts(\ReflectionClass $reflectionClass)
+    private function getFileStmts(\ReflectionClass $class)
     {
-        if (!isset($this->parsedFiles[$reflectionClass->getFileName()])) {
+        if (!isset($this->parsedFiles[$class->getFileName()])) {
             $parser = (new ParserFactory())->create(ParserFactory::PREFER_PHP7);
-            $stmts = $parser->parse(file_get_contents($reflectionClass->getFileName()));
-            $this->parsedFiles[$reflectionClass->getFileName()] = $stmts;
+            $stmts = $parser->parse(file_get_contents($class->getFileName()));
+            $this->parsedFiles[$class->getFileName()] = $stmts;
         }
 
-        return $this->parsedFiles[$reflectionClass->getFileName()];
+        return $this->parsedFiles[$class->getFileName()];
     }
 
-    private function getClassStmts(\ReflectionClass $reflectionClass)
+    private function getClassStmts(\ReflectionClass $class)
     {
-        $nodeFinder = new NodeFinder();
-        return $nodeFinder->findFirstInstanceOf($this->getFileStmts($reflectionClass), Class_::class);
+        return $this->getNodeFinder()->findFirstInstanceOf($this->getFileStmts($class), Class_::class);
     }
 
-    private function getMethodBody(ReflectionClass $reflectionClass, $reflectionMethod)
+    private function getMethodBody(ReflectionClass $class, $reflectionMethod)
     {
         $prettyPrinter = new Standard();
 
         $methodNode = null;
-        while ($reflectionClass !== false) {
+        while ($class !== false) {
             $methodName = $reflectionMethod->getName();
 
-            $classStmts = $this->getClassStmts($reflectionClass);
+            $classStmts = $this->getClassStmts($class);
             $methodNode = $classStmts->getMethod($methodName);
             if ($methodNode !== null) {
-                $fileStmts = $this->getFileStmts($reflectionClass);
-                $nodeFinder = new NodeFinder();
-                $useStatements = $nodeFinder->find($fileStmts, function (Node $node) {
+                $fileStmts = $this->getFileStmts($class);
+                $useStatements = $this->getNodeFinder()->find($fileStmts, function (Node $node) {
                     return $node instanceof Node\Stmt\Use_ && $node->type === Node\Stmt\Use_::TYPE_NORMAL;
                 });
 
@@ -146,7 +163,7 @@ trait GetClassMethodsTrait
                 break;
             }
 
-            $reflectionClass = $reflectionClass->getParentClass();
+            $class = $class->getParentClass();
         }
 
         if ($methodNode === null) {
@@ -158,182 +175,131 @@ trait GetClassMethodsTrait
         return str_replace("\n", "\n" . str_repeat(' ', 4), $prettyPrinter->prettyPrint($methodNode->stmts));
     }
 
-    private function getMethodCalls($reflectionClass, $methodName)
+    private function getPrivateMethodCalls(ReflectionClass $class, string $methodName): string
     {
-        $classStmts = $this->getClassStmts($reflectionClass);
-        $nodeFinder = new NodeFinder();
+        $classStmts = $this->getClassStmts($class);
 
-        $nodes = $nodeFinder->find($classStmts->getMethod($methodName), function (Node $node) use ($classStmts) {
-            $isThisCall = $node instanceof MethodCall &&
-                $node->var instanceof Variable &&
-                $node->var->name === 'this';
+        $nodes = $this->getNodeFinder()->find(
+            $classStmts->getMethod($methodName),
+            function (Node $node) use ($classStmts) {
+                $isThisCall = $node instanceof MethodCall &&
+                    $node->var instanceof Variable &&
+                    $node->var->name === 'this';
 
-            if ($isThisCall) {
-                $method = $classStmts->getMethod($node->name->name);
-                return $method !== null && $method->isPrivate();
+                if ($isThisCall) {
+                    $method = $classStmts->getMethod($node->name->name);
+                    return $method !== null && $method->isPrivate();
+                }
+
+                return false;
             }
-
-            return false;
-        });
+        );
 
         return implode(', ', array_map(function (Node $node) {
             return "'{$node->name->name}'";
         }, $nodes));
     }
 
-    protected function _getMethodInfo(\ReflectionMethod $method, $reflectionClass = null)
+    private function getParentCall(ReflectionMethod $method, array $parameters): string
+    {
+        /**
+         * Private methods can never be called directly, so we don't need to generate code to call parent.
+         * For pluginized private methods, this is handled by ___callParent.
+         */
+        if ($method->isPrivate()) {
+            return '';
+        }
+
+        return str_replace(
+            ['%return%', '%methodName%', '%paramters%'],
+            [$this->getReturnType($method), $method->getName(), $this->_getParameterList($parameters)],
+            <<<'PARENT_CALL'
+else {
+   %return% parent::%methodName%(%parameters%);
+}
+PARENT_CALL
+        );
+    }
+
+    private function getInlineCall(ReflectionMethod $method, \ReflectionClass $class): string
+    {
+        $methodCalls = $this->getPrivateMethodCalls($class, $method->getName());
+
+        /**
+         * We don't know if the method should be called inline until runtime...
+         * However, if the method has no private method calls at all, we can skip the check entirely.
+         */
+        if (empty($methodCalls)) {
+            return '';
+        }
+
+        return str_replace(
+            ['%methodCalls%', '%methodBody%'],
+            [$methodCalls, $this->getMethodBody($class, $method)],
+            <<<'INLINE_CALL'
+elseif ($this->___isInlineCall([%methodCalls%])) {
+    %methodBody%
+}
+INLINE_CALL
+        );
+    }
+
+    private function getInterceptorMethodBody(
+        ReflectionMethod $method,
+        ReflectionClass $class,
+        array $parameters
+    ): string {
+        return str_replace(
+            [
+                '%parentCall%',
+                '%inlineCall%',
+                '%methodName%',
+                '%return%',
+                '%parameters%'
+            ],
+            [
+                $this->getParentCall($method, $parameters),
+                $this->getInlineCall($method, $class),
+                $method->getName(),
+                $this->getReturnType($method),
+                $this->_getParameterList($parameters),
+            ],
+            <<<'METHOD_BODY'
+$pluginInfo = $this->pluginList->getNext($this->subjectType, '%methodName%');
+if ($pluginInfo) {
+   %return% $this->___callPlugins('%methodName%', func_get_args(), $pluginInfo);
+} %inlineCall% %parentCall%
+METHOD_BODY
+        );
+    }
+
+    private function getMethodVisibilityAsString(ReflectionMethod $method): string
+    {
+        return $method->isPrivate() ? 'private' : ($method->isProtected() ? 'protected' : 'public');
+    }
+
+    private function getReturnType(ReflectionMethod $method): string
+    {
+        return $this->getReturnTypeValue($method) === 'void' ? '' : ' return';
+    }
+
+    protected function _getMethodInfo(ReflectionMethod $method, $class = null): array
     {
         $parameters = [];
         foreach ($method->getParameters() as $parameter) {
             $parameters[] = $this->_getMethodParameterInfo($parameter);
         }
 
-        $methodCalls = $this->getMethodCalls($reflectionClass, $method->getName());
-        $returnTypeValue = $this->getReturnTypeValue($method);
         $methodInfo = [
             'name' => ($method->returnsReference() ? '& ' : '') . $method->getName(),
             'parameters' => $parameters,
-            'body' => str_replace(
-                [
-                    '%parentCall%',
-                    '%inlineCall%',
-                    '%methodName%',
-                    '%return%',
-                    '%parameters%'
-                ],
-                [
-                    /**
-                     * Private methods can never be called directly, so we don't need to generate code to call parent.
-                     * For pluginized private methods, this is handled by ___callParent.
-                     */
-                    $method->isPrivate() ? '' : <<<'PARENT_CALL'
-else {
-    %return% parent::%methodName%(%parameters%);
-}
-PARENT_CALL,
-
-                    /**
-                     * We don't know if the method should be called inline until runtime...
-                     * However, if the method has no private method calls at all, we can skip the check entirely.
-                     */
-                    empty($methodCalls) ? '' : str_replace(
-                        [
-                            '%methodCalls%',
-                            '%methodBody%'
-                        ],
-                        [
-                            $methodCalls,
-                            $this->getMethodBody($reflectionClass, $method),
-                        ],
-                        <<<'INLINE_CALL'
-if ($this->___isInlineCall([%methodCalls%])) {
-    %methodBody%
-} else
-INLINE_CALL
-                    ),
-
-                    $method->getName(),
-                    $returnTypeValue === 'void' ? '' : ' return',
-                    $this->_getParameterList($parameters),
-                ],
-                <<<'METHOD_BODY'
-$pluginInfo = $this->pluginList->getNext($this->subjectType, '%methodName%');
-%inlineCall%if ($pluginInfo) {
-    %return% $this->___callPlugins('%methodName%', func_get_args(), $pluginInfo);
-} %parentCall%
-METHOD_BODY
-            ),
-            'returnType' => $returnTypeValue,
+            'body' => $this->getInterceptorMethodBody($method, $class, $parameters),
+            'returnType' => $this->getReturnTypeValue($method),
             'docblock' => ['shortDescription' => '{@inheritdoc}'],
         ];
 
-        $methodInfo['visibility'] = $method->isPublic() ? 'public' : 'protected';
+        $methodInfo['visibility'] = $this->getMethodVisibilityAsString($method);
 
         return $methodInfo;
-    }
-
-    private function getSpecialMethods(): array
-    {
-        return [
-            [
-                'name' => '___callParent',
-                'parameters' => [
-                    ['name' => 'methodName'],
-                    ['name' => 'arguments'],
-                ],
-                'body' => <<<'METHOD_BODY'
-if (is_callable("parent::$methodName")) {
-    return parent::$methodName(...array_values($arguments));
-} else {
-    $method = $this->parentReflector->getMethod($methodName);
-    if (!$method->isPrivate()) {
-        throw new \RuntimeException();
-    }
-    $method->setAccessible(true);
-    return $method->invokeArgs($this, $arguments);
-}
-METHOD_BODY
-            ],
-            [
-                'name' => '___isInlineCall',
-                'visibility' => 'private',
-                'parameters' => [
-                    ['name' => 'methodCalls']
-                ],
-                'body' => <<<'METHOD_BODY'
-foreach ($methodCalls as $methodCall) {
-    if ($this->pluginList->getNext($this->subjectType, $methodCall)) {
-        return true;
-    }
-}
-return false;
-METHOD_BODY
-            ],
-            [
-                'name' => '___privateInit',
-                'visibility' => 'private',
-                'body' => <<<'METHOD_BODY'
-$this->parentReflector = (new \ReflectionObject($this))->getParentClass();
-METHOD_BODY
-            ],
-            [
-                'name' => '__set',
-                'parameters' => [
-                    ['name' => 'propertyName'],
-                    ['name' => 'propertyValue']
-                ],
-                'body' => <<<'METHOD_BODY'
-try {
-    $property = $this->parentReflector->getProperty($propertyName);
-    if ($property !== null && $property->isPrivate()) {
-        $property->setAccessible(true);
-        $property->setValue($this, $propertyValue);
-        $property->setAccessible(false);
-    }
-} catch (\ReflectionException $e) {
-    $this->$propertyName = $propertyValue;
-}
-METHOD_BODY
-            ],
-            [
-                'name' => '__get',
-                'parameters' => [
-                    ['name' => 'propertyName']
-                ],
-                'body' => <<<'METHOD_BODY'
-try {
-    $property = $this->parentReflector->getProperty($propertyName);
-    if ($property !== null && $property->isPrivate()) {
-        $property->setAccessible(true);
-        $value = $property->getValue();
-        $property->setAccessible(false);
-        return $value;
-    }
-} catch (\ReflectionException $e) {
-    return $this->$propertyName;
-}
-METHOD_BODY
-            ]
-        ];
     }
 }

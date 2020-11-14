@@ -5,4 +5,4 @@
  */
 use \Magento\Framework\Component\ComponentRegistrar;
 
-ComponentRegistrar::register(ComponentRegistrar::MODULE, 'Danslo_ProtectedInterceptors', __DIR__);
+ComponentRegistrar::register(ComponentRegistrar::MODULE, 'Danslo_PrivateParts', __DIR__);

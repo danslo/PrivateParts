@@ -1,6 +1,6 @@
 {
-  "name": "danslo/magento2-module-protected-interceptors",
-  "description": "Allows you to create Magento 2 plugins for protected methods.",
+  "name": "danslo/m2-module-private-parts",
+  "description": "Allows you to create Magento 2 plugins for non-public methods.",
   "type": "magento2-module",
   "license": "MIT",
   "autoload": {
@@ -8,7 +8,10 @@
       "registration.php"
     ],
     "psr-4": {
-      "Danslo\\ProtectedInterceptors\\": ""
+      "Danslo\\PrivateParts\\": ""
     }
+  },
+  "require": {
+    "nikic/php-parser": "^4.10"
   }
 }

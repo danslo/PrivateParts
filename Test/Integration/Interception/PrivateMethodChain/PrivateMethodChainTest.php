@@ -29,7 +29,7 @@ class PrivateMethodChainTest extends AbstractPlugin
 
     public function testPrivateMethodsInterceptedWhenCallingOtherPrivateMethods()
     {
-        $methodChainObject = $this->_objectManager->get(Intercepted::class);
+        $methodChainObject = $this->_objectManager->create(Intercepted::class);
         $this->assertEquals($methodChainObject->getValue(), 400);
     }
 }

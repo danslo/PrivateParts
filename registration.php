@@ -1,6 +1,6 @@
 <?php
 /**
- * Copyright © 2018 Daniel Sloof. All rights reserved.
+ * Copyright © 2020 Daniel Sloof. All rights reserved.
  * See LICENSE.txt for license details.
  */
 use \Magento\Framework\Component\ComponentRegistrar;

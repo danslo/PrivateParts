@@ -1,5 +1,8 @@
 <?php
-
+/**
+ * Copyright © 2020 Daniel Sloof. All rights reserved.
+ * See LICENSE.txt for license details.
+ */
 declare(strict_types=1);
 
 namespace Danslo\PrivateParts\Interception\Code\Generator;
@@ -17,11 +20,12 @@ use PhpParser\PrettyPrinter\Standard;
 use ReflectionClass;
 use ReflectionMethod;
 
-trait GetClassMethodsTrait
+trait PrivateMethodsGeneratorTrait
 {
     private $parsedFiles = [];
     private $useStatements = [];
     private $nodeFinder = null;
+    private $prettyPrinter = null;
 
     private $ignores = [
         CustomerRepository::class => ['addFilterGroupToCollection']
@@ -98,6 +102,14 @@ trait GetClassMethodsTrait
         return $this->nodeFinder;
     }
 
+    private function getPrettyPrinter(): Standard
+    {
+        if ($this->prettyPrinter === null) {
+            $this->prettyPrinter = new Standard();
+        }
+        return $this->prettyPrinter;
+    }
+
     private function isIgnoredMethod(ReflectionMethod $method): bool
     {
         if (!isset($this->ignores[$method->getDeclaringClass()->getName()])) {
@@ -139,8 +151,6 @@ trait GetClassMethodsTrait
 
     private function getMethodBody(ReflectionClass $class, $reflectionMethod)
     {
-        $prettyPrinter = new Standard();
-
         $methodNode = null;
         while ($class !== false) {
             $methodName = $reflectionMethod->getName();
@@ -158,7 +168,8 @@ trait GetClassMethodsTrait
                 }
 
                 foreach ($useStatements as $useStatement) {
-                    $this->useStatements[$this->getSourceClassName()][] = $prettyPrinter->prettyPrint([$useStatement]);
+                    $this->useStatements[$this->getSourceClassName()][] =
+                        $this->getPrettyPrinter()->prettyPrint([$useStatement]);
                 }
                 break;
             }
@@ -172,7 +183,7 @@ trait GetClassMethodsTrait
             return "{$returnTypeValue}parent::$methodName(...func_get_args());";
         }
 
-        return str_replace("\n", "\n" . str_repeat(' ', 4), $prettyPrinter->prettyPrint($methodNode->stmts));
+        return str_replace("\n", "\n" . str_repeat(' ', 4), $this->getPrettyPrinter()->prettyPrint($methodNode->stmts));
     }
 
     private function getPrivateMethodCalls(ReflectionClass $class, string $methodName): string

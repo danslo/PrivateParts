@@ -12,7 +12,7 @@ use Magento\Setup\Module\Di\Code\Generator\Interceptor as DiCompileInterceptor;
 
 abstract class AbstractPlugin extends \Magento\Framework\Interception\AbstractPlugin
 {
-    public static function setupBeforeClass()
+    public static function setupBeforeClass(): void
     {
         ObjectManager::getInstance()->configure([
             'preferences' => [
@@ -22,7 +22,7 @@ abstract class AbstractPlugin extends \Magento\Framework\Interception\AbstractPl
         ]);
     }
 
-    public static function tearDownAfterClass()
+    public static function tearDownAfterClass(): void
     {
         ObjectManager::getInstance()->configure([
             'preferences' => [

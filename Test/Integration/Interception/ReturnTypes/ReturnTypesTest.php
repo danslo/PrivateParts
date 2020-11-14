@@ -10,7 +10,7 @@ use Danslo\PrivateParts\Test\Integration\Interception\ReturnTypes\Fixture\Plugin
 
 class ReturnTypesTest extends AbstractPlugin
 {
-    public function setUp()
+    public function setUp(): void
     {
         $this->setUpInterceptionConfig(
             [

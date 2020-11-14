@@ -10,7 +10,7 @@ use Danslo\PrivateParts\Test\Integration\Interception\PrivateMethodChain\Fixture
 
 class PrivateMethodChainTest extends AbstractPlugin
 {
-    public function setUp()
+    public function setUp(): void
     {
         $this->setUpInterceptionConfig(
             [

@@ -10,7 +10,7 @@ use Danslo\PrivateParts\Test\Integration\Interception\Properties\Fixture\Plugin;
 
 class PropertyTest extends AbstractPlugin
 {
-    public function setUp()
+    public function setUp(): void
     {
         $this->setUpInterceptionConfig(
             [

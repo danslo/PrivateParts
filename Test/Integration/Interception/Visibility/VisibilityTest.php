@@ -10,7 +10,7 @@ use Danslo\PrivateParts\Test\Integration\Interception\Visibility\Fixture\Plugin;
 
 class VisibilityTest extends AbstractPlugin
 {
-    public function setUp()
+    public function setUp(): void
     {
         $this->setUpInterceptionConfig(
             [

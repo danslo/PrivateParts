@@ -5,7 +5,7 @@ TODO
 ## Installation
 
 ```bash
-$ composer require danslo/m2-module-private-parts
+$ composer require danslo/magento2-module-private-parts
 ```
 
 ## License

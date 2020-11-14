@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Danslo\ProtectedInterceptors\Interception;
+namespace Danslo\PrivateParts\Interception;
 
 use Magento\Framework\Interception\DefinitionInterface;
 

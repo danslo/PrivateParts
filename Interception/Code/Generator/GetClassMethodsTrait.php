@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Danslo\ProtectedInterceptors\Interception\Code\Generator;
+namespace Danslo\PrivateParts\Interception\Code\Generator;
 
 use Magento\Customer\Model\ResourceModel\CustomerRepository;
 use Magento\Framework\Code\Generator\EntityAbstract;
@@ -53,7 +53,7 @@ trait GetClassMethodsTrait
         } else {
             $this->_classGenerator->setExtendedClass($typeName);
         }
-        $this->_classGenerator->addTrait('\\' . \Danslo\ProtectedInterceptors\Interception\Interceptor::class);
+        $this->_classGenerator->addTrait('\\' . \Danslo\PrivateParts\Interception\Interceptor::class);
         $interfaces[] = '\\' . InterceptorInterface::class;
         $this->_classGenerator->setImplementedInterfaces($interfaces);
 

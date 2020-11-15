@@ -1,6 +1,9 @@
 # Private Parts for Magento 2
 
-TODO
+TODO:
+- When inlining calls, transform prop set/get to use custom `___propSet` / `___propGet` methods. Currently all private props are accessible.
+- Cleaning up code generator in general.
+
 
 ## Installation
 

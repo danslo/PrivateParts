@@ -11,10 +11,15 @@ use Magento\Customer\Model\ResourceModel\CustomerRepository;
 use Magento\Framework\Code\Generator\EntityAbstract;
 use Magento\Framework\Interception\InterceptorInterface;
 use PhpParser\Node;
+use PhpParser\Node\Expr\Assign;
 use PhpParser\Node\Expr\MethodCall;
+use PhpParser\Node\Expr\PropertyFetch;
 use PhpParser\Node\Expr\Variable;
+use PhpParser\Node\Scalar\String_;
 use PhpParser\Node\Stmt\Class_;
 use PhpParser\NodeFinder;
+use PhpParser\NodeTraverser;
+use PhpParser\NodeVisitorAbstract;
 use PhpParser\ParserFactory;
 use PhpParser\PrettyPrinter\Standard;
 use ReflectionClass;
@@ -183,6 +188,57 @@ trait PrivateMethodsGeneratorTrait
             return "{$returnTypeValue}parent::$methodName(...func_get_args());";
         }
 
+        $nodeTraverser = new NodeTraverser();
+        $nodeTraverser->addVisitor(new class($class) extends NodeVisitorAbstract {
+            private $class;
+            public function __construct($class)
+            {
+                $this->class = $class;
+            }
+            public function leaveNode(Node $node)
+            {
+                if ($node instanceof Assign &&
+                    $node->var instanceof PropertyFetch &&
+                    $node->var->var->name === 'this'
+                ) {
+                    $propName = $node->var->name->name;
+                    $prop = $this->class->getProperty($propName);
+                    if ($prop === null || !$prop->isPrivate()) {
+                        return $node;
+                    }
+                    return new MethodCall(new Variable('this'), '___propSet', [
+                        new Node\Arg(new String_($propName)),
+                        $node->expr
+                    ]);
+                }
+            }
+        });
+        $nodeTraverser->traverse($methodNode->stmts);
+
+        $nodeTraverser = new NodeTraverser();
+        $nodeTraverser->addVisitor(new class($class) extends NodeVisitorAbstract {
+            private $class;
+            public function __construct($class)
+            {
+                $this->class = $class;
+            }
+            public function leaveNode(Node $node)
+            {
+                if ($node instanceof PropertyFetch && $node->var->name === 'this') {
+                    $propName = $node->name->name;
+                    $prop = $this->class->getProperty($propName);
+                    if ($prop === null || !$prop->isPrivate()) {
+                        return $node;
+                    }
+                    return new MethodCall(new Variable('this'), '___propGet', [
+                        new Node\Arg(new String_($propName)),
+                    ]);
+                }
+            }
+        });
+        $nodeTraverser->traverse($methodNode->stmts);
+
+        // TODO: printFormatPreserving
         return str_replace("\n", "\n" . str_repeat(' ', 4), $this->getPrettyPrinter()->prettyPrint($methodNode->stmts));
     }
 

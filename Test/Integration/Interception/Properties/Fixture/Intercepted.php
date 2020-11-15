@@ -10,6 +10,8 @@ namespace Danslo\PrivateParts\Test\Integration\Interception\Properties\Fixture;
 class Intercepted
 {
     private $x = 100;
+    private $z = 500;
+    private $a = 100;
 
     private function y(): int
     {
@@ -19,5 +21,10 @@ class Intercepted
     public function z(): int
     {
         return $this->y();
+    }
+
+    public function a(): int
+    {
+        return $this->a;
     }
 }

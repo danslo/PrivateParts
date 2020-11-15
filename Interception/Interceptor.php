@@ -50,7 +50,7 @@ trait Interceptor
         $this->parentReflector = (new \ReflectionObject($this))->getParentClass();
     }
 
-    public function __set($propertyName, $propertyValue)
+    private function ___propSet($propertyName, $propertyValue)
     {
         try {
             $property = $this->parentReflector->getProperty($propertyName);
@@ -64,13 +64,13 @@ trait Interceptor
         }
     }
 
-    public function __get($propertyName)
+    private function ___propGet($propertyName)
     {
         try {
             $property = $this->parentReflector->getProperty($propertyName);
             if ($property !== null && $property->isPrivate()) {
                 $property->setAccessible(true);
-                $value = $property->getValue();
+                $value = $property->getValue($this);
                 $property->setAccessible(false);
                 return $value;
             }

@@ -13,6 +13,8 @@ use Danslo\PrivateParts\Test\Integration\Interception\Properties\Fixture\Plugin;
 
 class PropertyTest extends AbstractPlugin
 {
+    private $intercepted;
+
     public function setUp(): void
     {
         $this->setUpInterceptionConfig(
@@ -27,11 +29,29 @@ class PropertyTest extends AbstractPlugin
             ]
         );
 
+        $this->intercepted = $this->_objectManager->create(Intercepted::class);
+
         parent::setUp();
     }
 
     public function testCanReadPrivatePropertyWhenInlined()
     {
-        $this->assertEquals(100, $this->_objectManager->create(Intercepted::class)->z());
+        $this->assertEquals(100, $this->intercepted->z());
+    }
+
+    public function testCanReadPrivatePropertyNormally()
+    {
+        $this->assertEquals(100, $this->intercepted->a());
+    }
+
+    public function testUnableToReadNonInlineProperty()
+    {
+        $this->assertFalse(property_exists($this->intercepted, 'z'));
+    }
+
+    public function testUnableToWriteNonInlineProperty()
+    {
+        $this->intercepted->a = 200;
+        $this->assertEquals(100, $this->intercepted->a());
     }
 }

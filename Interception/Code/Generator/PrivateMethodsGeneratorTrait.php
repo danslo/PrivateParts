@@ -11,12 +11,14 @@ use Magento\Customer\Model\ResourceModel\CustomerRepository;
 use Magento\Framework\Code\Generator\EntityAbstract;
 use Magento\Framework\Interception\InterceptorInterface;
 use PhpParser\Node;
+use PhpParser\Node\Expr\ArrayDimFetch;
 use PhpParser\Node\Expr\Assign;
 use PhpParser\Node\Expr\MethodCall;
 use PhpParser\Node\Expr\PropertyFetch;
 use PhpParser\Node\Expr\Variable;
 use PhpParser\Node\Scalar\String_;
 use PhpParser\Node\Stmt\Class_;
+use PhpParser\Node\Stmt\If_;
 use PhpParser\NodeFinder;
 use PhpParser\NodeTraverser;
 use PhpParser\NodeVisitorAbstract;
@@ -191,10 +193,55 @@ trait PrivateMethodsGeneratorTrait
         $nodeTraverser = new NodeTraverser();
         $nodeTraverser->addVisitor(new class($class) extends NodeVisitorAbstract {
             private $class;
+
             public function __construct($class)
             {
                 $this->class = $class;
             }
+
+            private function isPrivateProperty(string $propName): bool
+            {
+                $prop = $this->class->getProperty($propName);
+                return $prop !== null && $prop->isPrivate();
+            }
+
+            public function enterNode(Node $node)
+            {
+                if ($node instanceof Node\Stmt\Expression &&
+                    $node->expr instanceof Assign &&
+                    $node->expr->var instanceof ArrayDimFetch &&
+                    $node->expr->var->var instanceof PropertyFetch &&
+                    $node->expr->var->var->var->name === 'this'
+                ) {
+                    if (!$this->isPrivateProperty($node->expr->var->var->name->name)) {
+                        return $node;
+                    }
+                    $node->expr = new If_(
+                        new Node\Expr\ConstFetch(new Node\Name('true')),
+                        [
+                            'stmts' => [
+                                new Node\Stmt\Expression(new Assign(
+                                    new Variable('props'),
+                                    $node->expr->var->var
+                                )),
+                                new Node\Stmt\Expression(new Assign(
+                                    new ArrayDimFetch(
+                                        new Variable('props'),
+                                        $node->expr->var->dim
+                                    ),
+                                    $node->expr->expr
+                                )),
+                                new Node\Stmt\Expression(new Assign(
+                                    $node->expr->var->var,
+                                    new Variable('props')
+                                )),
+                                new Node\Stmt\Unset_([new Variable('props')])
+                            ]
+                        ]
+                    );
+                }
+            }
+
             public function leaveNode(Node $node)
             {
                 if ($node instanceof Assign &&
@@ -202,8 +249,7 @@ trait PrivateMethodsGeneratorTrait
                     $node->var->var->name === 'this'
                 ) {
                     $propName = $node->var->name->name;
-                    $prop = $this->class->getProperty($propName);
-                    if ($prop === null || !$prop->isPrivate()) {
+                    if (!$this->isPrivateProperty($propName)) {
                         return $node;
                     }
                     return new MethodCall(new Variable('this'), '___propSet', [
@@ -213,6 +259,7 @@ trait PrivateMethodsGeneratorTrait
                 }
             }
         });
+
         $nodeTraverser->traverse($methodNode->stmts);
 
         $nodeTraverser = new NodeTraverser();
@@ -238,8 +285,7 @@ trait PrivateMethodsGeneratorTrait
         });
         $nodeTraverser->traverse($methodNode->stmts);
 
-        // TODO: printFormatPreserving
-        return str_replace("\n", "\n" . str_repeat(' ', 4), $this->getPrettyPrinter()->prettyPrint($methodNode->stmts));
+        return $this->getPrettyPrinter()->prettyPrint($methodNode->stmts);
     }
 
     private function getPrivateMethodCalls(ReflectionClass $class, string $methodName): string
@@ -267,14 +313,6 @@ trait PrivateMethodsGeneratorTrait
         }, $nodes));
     }
 
-    private function indent(string $code, int $numSpaces): string
-    {
-        $indentation = str_repeat(' ', $numSpaces);
-        return implode("\n", array_map(function (string $str) use ($indentation) {
-            return $indentation . $str;
-        }, explode("\n", $code)));
-    }
-
     private function getParentCall(ReflectionMethod $method, ReflectionClass $class, array $parameters): string
     {
         $parameterList = $this->_getParameterList($parameters);
@@ -289,7 +327,7 @@ trait PrivateMethodsGeneratorTrait
         if (!empty($methodCalls)) {
             $inlineCall = str_replace(
                 ['%methodCalls%', '%methodBody%'],
-                [$methodCalls, $this->indent($this->getMethodBody($class, $method), 4)],
+                [$methodCalls, $this->getMethodBody($class, $method)],
                 <<<'INLINE_CALL'
 if ($this->___isInlineCall([%methodCalls%])) {
 %methodBody%
@@ -310,7 +348,7 @@ PARENT_CALL
 
         return str_replace(
             ['%parentCall%', '%parameters%'],
-            [$this->indent($parentCall, 4), $parameterList],
+            [$parentCall, $parameterList],
             <<<'PARENT_CALL'
 $parentCall = function (%parameters%) {
 %parentCall%

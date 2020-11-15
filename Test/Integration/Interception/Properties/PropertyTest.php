@@ -54,4 +54,15 @@ class PropertyTest extends AbstractPlugin
         $this->intercepted->a = 200;
         $this->assertEquals(100, $this->intercepted->a());
     }
+
+    public function testCanWriteArrayPropertyWhenInlined()
+    {
+        $this->assertEquals([1, 2, 3], array_values($this->intercepted->c(1, 2, 3)));
+    }
+
+    public function testCanReadArrayWhenInlined()
+    {
+        $this->intercepted->setSomeArray([10, 20, 30]);
+        $this->assertEquals(30, $this->intercepted->f(2));
+    }
 }

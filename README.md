@@ -2,6 +2,7 @@
 
 TODO:
 - When inlining calls, transform prop set/get to use custom `___propSet` / `___propGet` methods. Currently all private props are accessible.
+- Inline private constants.
 - Cleaning up code generator in general.
 - Add more tests.
 

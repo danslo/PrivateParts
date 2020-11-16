@@ -7,22 +7,18 @@ declare(strict_types=1);
 
 namespace Danslo\PrivateParts\Interception\Code\Generator;
 
+use Danslo\PrivateParts\Interception\Code\Generator\Visitor\ConstVisitor;
+use Danslo\PrivateParts\Interception\Code\Generator\Visitor\PropGetVisitor;
+use Danslo\PrivateParts\Interception\Code\Generator\Visitor\PropSetVisitor;
 use Magento\Customer\Model\ResourceModel\CustomerRepository;
 use Magento\Framework\Code\Generator\EntityAbstract;
 use Magento\Framework\Interception\InterceptorInterface;
 use PhpParser\Node;
-use PhpParser\Node\Const_;
-use PhpParser\Node\Expr\ArrayDimFetch;
-use PhpParser\Node\Expr\Assign;
 use PhpParser\Node\Expr\MethodCall;
-use PhpParser\Node\Expr\PropertyFetch;
 use PhpParser\Node\Expr\Variable;
-use PhpParser\Node\Scalar\String_;
 use PhpParser\Node\Stmt\Class_;
-use PhpParser\Node\Stmt\If_;
 use PhpParser\NodeFinder;
 use PhpParser\NodeTraverser;
-use PhpParser\NodeVisitorAbstract;
 use PhpParser\ParserFactory;
 use PhpParser\PrettyPrinter\Standard;
 use ReflectionClass;
@@ -200,71 +196,8 @@ trait PrivateMethodsGeneratorTrait
     private function getPropSetTraverser(ReflectionClass $class): NodeTraverser
     {
         if ($this->propSetTraverser === null) {
-            $nodeTraverser = new NodeTraverser();
-            $nodeTraverser->addVisitor(new class($class) extends NodeVisitorAbstract {
-                private $class;
-
-                public function __construct($class)
-                {
-                    $this->class = $class;
-                }
-
-                private function isPrivateProperty(string $propName): bool
-                {
-                    $prop = $this->class->getProperty($propName);
-                    return $prop !== null && $prop->isPrivate();
-                }
-
-                public function enterNode(Node $node)
-                {
-                    if ($node instanceof Node\Stmt\Expression &&
-                        $node->expr instanceof Assign &&
-                        $node->expr->var instanceof ArrayDimFetch &&
-                        $node->expr->var->var instanceof PropertyFetch &&
-                        $node->expr->var->var->var->name === 'this'
-                    ) {
-                        if (!$this->isPrivateProperty($node->expr->var->var->name->name)) {
-                            return $node;
-                        }
-                        $propsVar = new Variable('___props');
-                        $node->expr = new If_(
-                            new Node\Expr\ConstFetch(new Node\Name('true')),
-                            [
-                                'stmts' => [
-                                    new Node\Stmt\Expression(new Assign($propsVar, $node->expr->var->var)),
-                                    new Node\Stmt\Expression(new Assign(
-                                        new ArrayDimFetch(
-                                            $propsVar,
-                                            $node->expr->var->dim
-                                        ),
-                                        $node->expr->expr
-                                    )),
-                                    new Node\Stmt\Expression(new Assign($node->expr->var->var, $propsVar)),
-                                    new Node\Stmt\Unset_([$propsVar])
-                                ]
-                            ]
-                        );
-                    }
-                }
-
-                public function leaveNode(Node $node)
-                {
-                    if ($node instanceof Assign &&
-                        $node->var instanceof PropertyFetch &&
-                        $node->var->var->name === 'this'
-                    ) {
-                        $propName = $node->var->name->name;
-                        if (!$this->isPrivateProperty($propName)) {
-                            return $node;
-                        }
-                        return new MethodCall(new Variable('this'), '___propSet', [
-                            new Node\Arg(new String_($propName)),
-                            $node->expr
-                        ]);
-                    }
-                }
-            });
-            $this->propSetTraverser = $nodeTraverser;
+            $this->propSetTraverser = new NodeTraverser();
+            $this->propSetTraverser->addVisitor(new PropSetVisitor($class));
         }
         return $this->propSetTraverser;
     }
@@ -272,30 +205,8 @@ trait PrivateMethodsGeneratorTrait
     private function getPropGetTraverser(ReflectionClass $class): NodeTraverser
     {
         if ($this->propGetTraverser === null) {
-            $nodeTraverser = new NodeTraverser();
-            $nodeTraverser->addVisitor(new class($class) extends NodeVisitorAbstract {
-                private $class;
-
-                public function __construct($class)
-                {
-                    $this->class = $class;
-                }
-
-                public function leaveNode(Node $node)
-                {
-                    if ($node instanceof PropertyFetch && $node->var->name === 'this') {
-                        $propName = $node->name->name;
-                        $prop = $this->class->getProperty($propName);
-                        if ($prop === null || !$prop->isPrivate()) {
-                            return $node;
-                        }
-                        return new MethodCall(new Variable('this'), '___propGet', [
-                            new Node\Arg(new String_($propName)),
-                        ]);
-                    }
-                }
-            });
-            $this->propGetTraverser = $nodeTraverser;
+            $this->propGetTraverser = new NodeTraverser();
+            $this->propGetTraverser->addVisitor(new PropGetVisitor($class));
         }
         return $this->propGetTraverser;
     }
@@ -303,46 +214,8 @@ trait PrivateMethodsGeneratorTrait
     private function getConstTraverser(ReflectionClass $class, NodeFinder $nodeFinder, $classStmts): NodeTraverser
     {
         if ($this->constTraverser === null) {
-            $nodeTraverser = new NodeTraverser();
-            $nodeTraverser->addVisitor(new class($class, $nodeFinder, $classStmts) extends NodeVisitorAbstract {
-                private $class;
-                private $nodeFinder;
-                private $classStmts;
-
-                public function __construct(ReflectionClass $class, NodeFinder $nodeFinder, $classStmts)
-                {
-                    $this->class = $class;
-                    $this->nodeFinder = $nodeFinder;
-                    $this->classStmts = $classStmts;
-                }
-
-                public function leaveNode(Node $node)
-                {
-                    if ($node instanceof Node\Expr\ClassConstFetch) {
-                        $classes = [
-                            'self',
-                            $this->class->getName(),
-                            $this->class->getShortName()
-                        ];
-
-                        if (in_array(implode('\\', $node->class->parts), $classes)) {
-                            $const = $this->class->getReflectionConstant($node->name->name);
-                            if ($const === null || !$const->isPrivate()) {
-                                return $node;
-                            }
-
-                            $constant = $this->nodeFinder->findFirst($this->classStmts, function (Node $node) use ($const) {
-                                return $node instanceof Const_ && $node->name->name === $const->getName();
-                            });
-
-                            if ($constant) {
-                                return $constant->value;
-                            }
-                        }
-                    }
-                }
-            });
-            $this->constTraverser = $nodeTraverser;
+            $this->constTraverser = new NodeTraverser();
+            $this->constTraverser->addVisitor(new ConstVisitor($class, $nodeFinder, $classStmts));
         }
         return $this->constTraverser;
     }

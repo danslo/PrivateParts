@@ -17,7 +17,7 @@ It is not a secret that there are a lot of places in Magento that use private me
 In those cases you are advised to make Magento extensible, either by dispatching events or by extracting logic into separate class. 
 You should then submit a pull request and use [composer-patches](https://github.com/cweagans/composer-patches) until your changes are merged upstream and released.
 
-While public methods are not guaranteed to stay the same across releases (unless marked with [@api](https://devdocs.magento.com/contributor-guide/backward-compatible-development/), private methods are more prone to such changes.
+While public methods are not guaranteed to stay the same across releases (unless marked with [@api](https://devdocs.magento.com/contributor-guide/backward-compatible-development/)), private methods are more prone to such changes.
 
 This module was written as a fun side-project and exists purely as a proof of concept. Nothing in production is currently using this module. Use at your own risk.
 

@@ -29,10 +29,12 @@ use ReflectionMethod;
 
 trait PrivateMethodsGeneratorTrait
 {
-    private $parsedFiles = [];
-    private $useStatements = [];
-    private $nodeFinder = null;
-    private $prettyPrinter = null;
+    private $parsedFiles      = [];
+    private $useStatements    = [];
+    private $nodeFinder       = null;
+    private $prettyPrinter    = null;
+    private $propSetTraverser = null;
+    private $propGetTraverser = null;
 
     private $ignores = [
         CustomerRepository::class => ['addFilterGroupToCollection']
@@ -101,6 +103,26 @@ trait PrivateMethodsGeneratorTrait
         return $methods;
     }
 
+    protected function _getMethodInfo(ReflectionMethod $method, $class = null): array
+    {
+        $parameters = [];
+        foreach ($method->getParameters() as $parameter) {
+            $parameters[] = $this->_getMethodParameterInfo($parameter);
+        }
+
+        $methodInfo = [
+            'name' => ($method->returnsReference() ? '& ' : '') . $method->getName(),
+            'parameters' => $parameters,
+            'body' => $this->getInterceptorMethodBody($method, $class, $parameters),
+            'returnType' => $this->getReturnTypeValue($method),
+            'docblock' => ['shortDescription' => '{@inheritdoc}'],
+        ];
+
+        $methodInfo['visibility'] = $this->getMethodVisibilityAsString($method);
+
+        return $methodInfo;
+    }
+
     private function getNodeFinder(): NodeFinder
     {
         if ($this->nodeFinder === null) {
@@ -156,6 +178,126 @@ trait PrivateMethodsGeneratorTrait
         return $this->getNodeFinder()->findFirstInstanceOf($this->getFileStmts($class), Class_::class);
     }
 
+    private function collectUseStatements(ReflectionClass $class): void
+    {
+        $fileStmts = $this->getFileStmts($class);
+        $useStatements = $this->getNodeFinder()->find($fileStmts, function (Node $node) {
+            return $node instanceof Node\Stmt\Use_ && $node->type === Node\Stmt\Use_::TYPE_NORMAL;
+        });
+
+        if (!isset($this->useStatements[$this->getSourceClassName()])) {
+            $this->useStatements[$this->getSourceClassName()] = [];
+        }
+
+        foreach ($useStatements as $useStatement) {
+            $this->useStatements[$this->getSourceClassName()][] =
+                $this->getPrettyPrinter()->prettyPrint([$useStatement]);
+        }
+    }
+
+    private function getPropSetTraverser(ReflectionClass $class): NodeTraverser
+    {
+        if ($this->propSetTraverser === null) {
+            $nodeTraverser = new NodeTraverser();
+            $nodeTraverser->addVisitor(new class($class) extends NodeVisitorAbstract {
+                private $class;
+
+                public function __construct($class)
+                {
+                    $this->class = $class;
+                }
+
+                private function isPrivateProperty(string $propName): bool
+                {
+                    $prop = $this->class->getProperty($propName);
+                    return $prop !== null && $prop->isPrivate();
+                }
+
+                public function enterNode(Node $node)
+                {
+                    if ($node instanceof Node\Stmt\Expression &&
+                        $node->expr instanceof Assign &&
+                        $node->expr->var instanceof ArrayDimFetch &&
+                        $node->expr->var->var instanceof PropertyFetch &&
+                        $node->expr->var->var->var->name === 'this'
+                    ) {
+                        if (!$this->isPrivateProperty($node->expr->var->var->name->name)) {
+                            return $node;
+                        }
+                        $propsVar = new Variable('___props');
+                        $node->expr = new If_(
+                            new Node\Expr\ConstFetch(new Node\Name('true')),
+                            [
+                                'stmts' => [
+                                    new Node\Stmt\Expression(new Assign($propsVar, $node->expr->var->var)),
+                                    new Node\Stmt\Expression(new Assign(
+                                        new ArrayDimFetch(
+                                            $propsVar,
+                                            $node->expr->var->dim
+                                        ),
+                                        $node->expr->expr
+                                    )),
+                                    new Node\Stmt\Expression(new Assign($node->expr->var->var, $propsVar)),
+                                    new Node\Stmt\Unset_([$propsVar])
+                                ]
+                            ]
+                        );
+                    }
+                }
+
+                public function leaveNode(Node $node)
+                {
+                    if ($node instanceof Assign &&
+                        $node->var instanceof PropertyFetch &&
+                        $node->var->var->name === 'this'
+                    ) {
+                        $propName = $node->var->name->name;
+                        if (!$this->isPrivateProperty($propName)) {
+                            return $node;
+                        }
+                        return new MethodCall(new Variable('this'), '___propSet', [
+                            new Node\Arg(new String_($propName)),
+                            $node->expr
+                        ]);
+                    }
+                }
+            });
+            $this->propSetTraverser = $nodeTraverser;
+        }
+        return $this->propSetTraverser;
+    }
+
+    private function getPropGetTraverser(ReflectionClass $class): NodeTraverser
+    {
+        if ($this->propGetTraverser === null) {
+            $nodeTraverser = new NodeTraverser();
+            $nodeTraverser->addVisitor(new class($class) extends NodeVisitorAbstract {
+                private $class;
+
+                public function __construct($class)
+                {
+                    $this->class = $class;
+                }
+
+                public function leaveNode(Node $node)
+                {
+                    if ($node instanceof PropertyFetch && $node->var->name === 'this') {
+                        $propName = $node->name->name;
+                        $prop = $this->class->getProperty($propName);
+                        if ($prop === null || !$prop->isPrivate()) {
+                            return $node;
+                        }
+                        return new MethodCall(new Variable('this'), '___propGet', [
+                            new Node\Arg(new String_($propName)),
+                        ]);
+                    }
+                }
+            });
+            $this->propGetTraverser = $nodeTraverser;
+        }
+        return $this->propGetTraverser;
+    }
+
     private function getMethodBody(ReflectionClass $class, $reflectionMethod)
     {
         $methodNode = null;
@@ -165,19 +307,6 @@ trait PrivateMethodsGeneratorTrait
             $classStmts = $this->getClassStmts($class);
             $methodNode = $classStmts->getMethod($methodName);
             if ($methodNode !== null) {
-                $fileStmts = $this->getFileStmts($class);
-                $useStatements = $this->getNodeFinder()->find($fileStmts, function (Node $node) {
-                    return $node instanceof Node\Stmt\Use_ && $node->type === Node\Stmt\Use_::TYPE_NORMAL;
-                });
-
-                if (!isset($this->useStatements[$this->getSourceClassName()])) {
-                    $this->useStatements[$this->getSourceClassName()] = [];
-                }
-
-                foreach ($useStatements as $useStatement) {
-                    $this->useStatements[$this->getSourceClassName()][] =
-                        $this->getPrettyPrinter()->prettyPrint([$useStatement]);
-                }
                 break;
             }
 
@@ -190,95 +319,9 @@ trait PrivateMethodsGeneratorTrait
             return "{$returnTypeValue}parent::$methodName(...func_get_args());";
         }
 
-        $nodeTraverser = new NodeTraverser();
-        $nodeTraverser->addVisitor(new class($class) extends NodeVisitorAbstract {
-            private $class;
-
-            public function __construct($class)
-            {
-                $this->class = $class;
-            }
-
-            private function isPrivateProperty(string $propName): bool
-            {
-                $prop = $this->class->getProperty($propName);
-                return $prop !== null && $prop->isPrivate();
-            }
-
-            public function enterNode(Node $node)
-            {
-                if ($node instanceof Node\Stmt\Expression &&
-                    $node->expr instanceof Assign &&
-                    $node->expr->var instanceof ArrayDimFetch &&
-                    $node->expr->var->var instanceof PropertyFetch &&
-                    $node->expr->var->var->var->name === 'this'
-                ) {
-                    if (!$this->isPrivateProperty($node->expr->var->var->name->name)) {
-                        return $node;
-                    }
-                    $propsVar = new Variable('___props');
-                    $node->expr = new If_(
-                        new Node\Expr\ConstFetch(new Node\Name('true')),
-                        [
-                            'stmts' => [
-                                new Node\Stmt\Expression(new Assign($propsVar, $node->expr->var->var)),
-                                new Node\Stmt\Expression(new Assign(
-                                    new ArrayDimFetch(
-                                        $propsVar,
-                                        $node->expr->var->dim
-                                    ),
-                                    $node->expr->expr
-                                )),
-                                new Node\Stmt\Expression(new Assign($node->expr->var->var, $propsVar)),
-                                new Node\Stmt\Unset_([$propsVar])
-                            ]
-                        ]
-                    );
-                }
-            }
-
-            public function leaveNode(Node $node)
-            {
-                if ($node instanceof Assign &&
-                    $node->var instanceof PropertyFetch &&
-                    $node->var->var->name === 'this'
-                ) {
-                    $propName = $node->var->name->name;
-                    if (!$this->isPrivateProperty($propName)) {
-                        return $node;
-                    }
-                    return new MethodCall(new Variable('this'), '___propSet', [
-                        new Node\Arg(new String_($propName)),
-                        $node->expr
-                    ]);
-                }
-            }
-        });
-
-        $nodeTraverser->traverse($methodNode->stmts);
-
-        $nodeTraverser = new NodeTraverser();
-        $nodeTraverser->addVisitor(new class($class) extends NodeVisitorAbstract {
-            private $class;
-            public function __construct($class)
-            {
-                $this->class = $class;
-            }
-            public function leaveNode(Node $node)
-            {
-                if ($node instanceof PropertyFetch && $node->var->name === 'this') {
-                    $propName = $node->name->name;
-                    $prop = $this->class->getProperty($propName);
-                    if ($prop === null || !$prop->isPrivate()) {
-                        return $node;
-                    }
-                    return new MethodCall(new Variable('this'), '___propGet', [
-                        new Node\Arg(new String_($propName)),
-                    ]);
-                }
-            }
-        });
-        $nodeTraverser->traverse($methodNode->stmts);
+        $this->collectUseStatements($class);
+        $this->getPropSetTraverser($class)->traverse($methodNode->stmts);
+        $this->getPropGetTraverser($class)->traverse($methodNode->stmts);
 
         return $this->getPrettyPrinter()->prettyPrint($methodNode->stmts);
     }
@@ -392,25 +435,5 @@ METHOD_BODY
     private function getReturnType(ReflectionMethod $method): string
     {
         return $this->getReturnTypeValue($method) === 'void' ? '' : ' return';
-    }
-
-    protected function _getMethodInfo(ReflectionMethod $method, $class = null): array
-    {
-        $parameters = [];
-        foreach ($method->getParameters() as $parameter) {
-            $parameters[] = $this->_getMethodParameterInfo($parameter);
-        }
-
-        $methodInfo = [
-            'name' => ($method->returnsReference() ? '& ' : '') . $method->getName(),
-            'parameters' => $parameters,
-            'body' => $this->getInterceptorMethodBody($method, $class, $parameters),
-            'returnType' => $this->getReturnTypeValue($method),
-            'docblock' => ['shortDescription' => '{@inheritdoc}'],
-        ];
-
-        $methodInfo['visibility'] = $this->getMethodVisibilityAsString($method);
-
-        return $methodInfo;
     }
 }

@@ -23,6 +23,7 @@ Currently known limitations (this list will likely grow in the future):
 - No support for private static properties. These are barely used but `___staticProp{Set|Get}` could be implemented.
 - More tests are required around plugin inheritance (private methods of parent classes).
 - Generated code has incorrect indentation, planning to use nikic php-parser's `printFormatPreserving`.
+- Because we use a [PHP Parser](https://github.com/nikic/PHP-Parser), code generation is a bit slower than normal. Runtime performance is mostly unaffected.
    
 ## Disclaimer
 

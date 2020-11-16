@@ -29,9 +29,9 @@ class PropertyTest extends AbstractPlugin
             ]
         );
 
-        $this->intercepted = $this->_objectManager->create(Intercepted::class);
-
         parent::setUp();
+
+        $this->intercepted = $this->_objectManager->create(Intercepted::class);
     }
 
     public function testCanReadPrivatePropertyWhenInlined()

@@ -8,6 +8,22 @@ PrivateParts is a Magento 2 module that lets you create plugins for protected an
 $ composer require danslo/magento2-module-private-parts:dev-master
 ```
 
+## How it works
+
+The class that is responsible for generating code for plugins is extended;
+  - Make it generate protected methods
+  - Make it generate private methods
+  - Any method that calls into a private method will have its method body inlined. The inlined code is only called if the private methods have at least 1 plugin. This is known at runtime, so we generate a list of private method and add `___isInlineCall` to the interceptor trait.
+  - To make sure that the inlined code works as normal, we need to do several things:
+    - Any `use` statements in the original class need to be copied to the interceptor.
+    - Property reads/writes are transformed into `___prop{Get|Set}` calls which use reflection to access original properties.
+    - Private constants are inlined.
+    
+Currently known limitations (this list will likely grow in the future):
+- No support for private static properties. These are barely used but `___staticProp{Set|Get}` could be implemented.
+- More tests are required around plugin inheritance (private methods of parent classes).
+- Generated code has incorrect indentation, planning to use nikic php-parser's `printFormatPreserving`.
+   
 ## Disclaimer
 
 You should probably not use this package. 

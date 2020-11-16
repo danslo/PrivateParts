@@ -14,6 +14,12 @@ class Intercepted
     private $a = 100;
 
     private $someArray = [];
+    private $podObject;
+
+    public function __construct()
+    {
+        $this->podObject = new PodObject();
+    }
 
     private function y(): int
     {
@@ -32,6 +38,7 @@ class Intercepted
 
     private function b(int $a, int $b, int $c): void
     {
+        $this->y(); // forcing inline
         $this->someArray[] = $a;
         $this->someArray['test'] = $b;
         $this->someArray[100] = $c;
@@ -50,7 +57,18 @@ class Intercepted
 
     public function f(int $index): int
     {
-        $this->y(); // forcing inlining
+        $this->y(); // forcing inline
         return $this->someArray[$index];
+    }
+
+    public function addValueToPodObject(int $b)
+    {
+        $this->y(); // forcing inline
+        $this->podObject->someArray[] = $b;
+    }
+
+    public function getPodObject()
+    {
+        return $this->podObject;
     }
 }

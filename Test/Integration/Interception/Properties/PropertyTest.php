@@ -65,4 +65,14 @@ class PropertyTest extends AbstractPlugin
         $this->intercepted->setSomeArray([10, 20, 30]);
         $this->assertEquals(30, $this->intercepted->f(2));
     }
+
+    public function testCanSetPrivateObjectArrayPropertyWhenInlined()
+    {
+        $values = [1337, 42, 4444];
+        foreach ($values as $value) {
+            $this->intercepted->addValueToPodObject($value);
+        }
+
+        $this->assertEquals($this->intercepted->getPodObject()->someArray, $values);
+    }
 }

@@ -11,6 +11,7 @@ use Magento\Customer\Model\ResourceModel\CustomerRepository;
 use Magento\Framework\Code\Generator\EntityAbstract;
 use Magento\Framework\Interception\InterceptorInterface;
 use PhpParser\Node;
+use PhpParser\Node\Const_;
 use PhpParser\Node\Expr\ArrayDimFetch;
 use PhpParser\Node\Expr\Assign;
 use PhpParser\Node\Expr\MethodCall;
@@ -29,12 +30,13 @@ use ReflectionMethod;
 
 trait PrivateMethodsGeneratorTrait
 {
-    private $parsedFiles      = [];
-    private $useStatements    = [];
-    private $nodeFinder       = null;
-    private $prettyPrinter    = null;
+    private $parsedFiles = [];
+    private $useStatements = [];
+    private $nodeFinder = null;
+    private $prettyPrinter = null;
     private $propSetTraverser = null;
     private $propGetTraverser = null;
+    private $constTraverser = null;
 
     private $ignores = [
         CustomerRepository::class => ['addFilterGroupToCollection']
@@ -298,9 +300,58 @@ trait PrivateMethodsGeneratorTrait
         return $this->propGetTraverser;
     }
 
-    private function getMethodBody(ReflectionClass $class, $reflectionMethod)
+    private function getConstTraverser(ReflectionClass $class, NodeFinder $nodeFinder, $classStmts): NodeTraverser
+    {
+        if ($this->constTraverser === null) {
+            $nodeTraverser = new NodeTraverser();
+            $nodeTraverser->addVisitor(new class($class, $nodeFinder, $classStmts) extends NodeVisitorAbstract {
+                private $class;
+                private $nodeFinder;
+                private $classStmts;
+
+                public function __construct(ReflectionClass $class, NodeFinder $nodeFinder, $classStmts)
+                {
+                    $this->class = $class;
+                    $this->nodeFinder = $nodeFinder;
+                    $this->classStmts = $classStmts;
+                }
+
+                public function leaveNode(Node $node)
+                {
+                    if ($node instanceof Node\Expr\ClassConstFetch) {
+                        $classes = [
+                            'self',
+                            $this->class->getName(),
+                            $this->class->getShortName()
+                        ];
+
+                        if (in_array(implode('\\', $node->class->parts), $classes)) {
+                            $const = $this->class->getReflectionConstant($node->name->name);
+                            if ($const === null || !$const->isPrivate()) {
+                                return $node;
+                            }
+
+                            $constant = $this->nodeFinder->findFirst($this->classStmts, function (Node $node) use ($const) {
+                                return $node instanceof Const_ && $node->name->name === $const->getName();
+                            });
+
+                            if ($constant) {
+                                return $constant->value;
+                            }
+                        }
+                    }
+                }
+            });
+            $this->constTraverser = $nodeTraverser;
+        }
+        return $this->constTraverser;
+    }
+
+    private function getMethodBody(ReflectionClass $class, ReflectionMethod $reflectionMethod)
     {
         $methodNode = null;
+        $classStmts = null;
+
         while ($class !== false) {
             $methodName = $reflectionMethod->getName();
 
@@ -322,6 +373,12 @@ trait PrivateMethodsGeneratorTrait
         $this->collectUseStatements($class);
         $this->getPropSetTraverser($class)->traverse($methodNode->stmts);
         $this->getPropGetTraverser($class)->traverse($methodNode->stmts);
+
+        // Constant traverser requires two passes to properly resolve const array by const key lookups.
+        $constTraverser = $this->getConstTraverser($class, $this->getNodeFinder(), $classStmts);
+        for ($i = 0; $i < 2; $i++) {
+            $constTraverser->traverse($methodNode->stmts);
+        }
 
         return $this->getPrettyPrinter()->prettyPrint($methodNode->stmts);
     }
@@ -399,7 +456,8 @@ PARENT_CALL
         ReflectionMethod $method,
         ReflectionClass $class,
         array $parameters
-    ): string {
+    ): string
+    {
         $return = $this->getReturnType($method);
         $parameterList = $this->_getParameterList($parameters);
         $parentCall = $this->getParentCall($method, $class, $parameters);

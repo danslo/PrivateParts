@@ -216,26 +216,21 @@ trait PrivateMethodsGeneratorTrait
                     if (!$this->isPrivateProperty($node->expr->var->var->name->name)) {
                         return $node;
                     }
+                    $propsVar = new Variable('___props');
                     $node->expr = new If_(
                         new Node\Expr\ConstFetch(new Node\Name('true')),
                         [
                             'stmts' => [
-                                new Node\Stmt\Expression(new Assign(
-                                    new Variable('props'),
-                                    $node->expr->var->var
-                                )),
+                                new Node\Stmt\Expression(new Assign(new Variable($propsVar), $node->expr->var->var)),
                                 new Node\Stmt\Expression(new Assign(
                                     new ArrayDimFetch(
-                                        new Variable('props'),
+                                        new Variable($propsVar),
                                         $node->expr->var->dim
                                     ),
                                     $node->expr->expr
                                 )),
-                                new Node\Stmt\Expression(new Assign(
-                                    $node->expr->var->var,
-                                    new Variable('props')
-                                )),
-                                new Node\Stmt\Unset_([new Variable('props')])
+                                new Node\Stmt\Expression(new Assign($node->expr->var->var, new Variable($propsVar))),
+                                new Node\Stmt\Unset_([$propsVar])
                             ]
                         ]
                     );

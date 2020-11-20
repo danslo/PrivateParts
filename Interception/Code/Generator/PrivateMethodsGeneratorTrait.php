@@ -10,6 +10,7 @@ namespace Danslo\PrivateParts\Interception\Code\Generator;
 use Danslo\PrivateParts\Interception\Code\Generator\Visitor\ConstVisitor;
 use Danslo\PrivateParts\Interception\Code\Generator\Visitor\PropGetVisitor;
 use Danslo\PrivateParts\Interception\Code\Generator\Visitor\PropSetVisitor;
+use Danslo\PrivateParts\Interception\Code\Generator\Visitor\PropVisitorHelper;
 use Magento\Customer\Model\ResourceModel\CustomerRepository;
 use Magento\Framework\Code\Generator\EntityAbstract;
 use Magento\Framework\Interception\InterceptorInterface;
@@ -197,7 +198,7 @@ trait PrivateMethodsGeneratorTrait
     {
         if ($this->propSetTraverser === null) {
             $this->propSetTraverser = new NodeTraverser();
-            $this->propSetTraverser->addVisitor(new PropSetVisitor($class));
+            $this->propSetTraverser->addVisitor(new PropSetVisitor(new PropVisitorHelper(), $class));
         }
         return $this->propSetTraverser;
     }
@@ -206,7 +207,7 @@ trait PrivateMethodsGeneratorTrait
     {
         if ($this->propGetTraverser === null) {
             $this->propGetTraverser = new NodeTraverser();
-            $this->propGetTraverser->addVisitor(new PropGetVisitor($class));
+            $this->propGetTraverser->addVisitor(new PropGetVisitor(new PropVisitorHelper(), $class));
         }
         return $this->propGetTraverser;
     }

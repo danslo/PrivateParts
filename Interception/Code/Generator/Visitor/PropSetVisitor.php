@@ -5,30 +5,29 @@ declare(strict_types=1);
 namespace Danslo\PrivateParts\Interception\Code\Generator\Visitor;
 
 use PhpParser\Node;
+use PhpParser\Node\Arg;
 use PhpParser\Node\Expr\ArrayDimFetch;
 use PhpParser\Node\Expr\Assign;
+use PhpParser\Node\Expr\ConstFetch;
 use PhpParser\Node\Expr\MethodCall;
-use PhpParser\Node\Expr\PropertyFetch;
 use PhpParser\Node\Expr\Variable;
+use PhpParser\Node\Name;
 use PhpParser\Node\Scalar\String_;
 use PhpParser\Node\Stmt\Expression;
 use PhpParser\Node\Stmt\If_;
+use PhpParser\Node\Stmt\Unset_;
 use PhpParser\NodeVisitorAbstract;
 use ReflectionClass;
 
 class PropSetVisitor extends NodeVisitorAbstract
 {
+    private $propVisitorHelper;
     private $class;
 
-    public function __construct(ReflectionClass $class)
+    public function __construct(PropVisitorHelper $propVisitorHelper, ReflectionClass $class)
     {
+        $this->propVisitorHelper = $propVisitorHelper;
         $this->class = $class;
-    }
-
-    private function isPrivateProperty(string $propName): bool
-    {
-        $prop = $this->class->getProperty($propName);
-        return $prop !== null && $prop->isPrivate();
     }
 
     public function enterNode(Node $node)
@@ -37,15 +36,11 @@ class PropSetVisitor extends NodeVisitorAbstract
             $node instanceof Expression &&
             $node->expr instanceof Assign &&
             $node->expr->var instanceof ArrayDimFetch &&
-            $node->expr->var->var instanceof PropertyFetch &&
-            $node->expr->var->var->var->name === 'this'
+            $this->propVisitorHelper->isPrivatePropertyFetch($this->class, $node->expr->var->var)
         ) {
-            if (!$this->isPrivateProperty($node->expr->var->var->name->name)) {
-                return $node;
-            }
             $propsVar = new Variable('___props');
             $node->expr = new If_(
-                new Node\Expr\ConstFetch(new Node\Name('true')),
+                new ConstFetch(new Name('true')),
                 [
                     'stmts' => [
                         new Expression(new Assign($propsVar, $node->expr->var->var)),
@@ -57,7 +52,7 @@ class PropSetVisitor extends NodeVisitorAbstract
                             $node->expr->expr
                         )),
                         new Expression(new Assign($node->expr->var->var, $propsVar)),
-                        new Node\Stmt\Unset_([$propsVar])
+                        new Unset_([$propsVar])
                     ]
                 ]
             );
@@ -66,15 +61,12 @@ class PropSetVisitor extends NodeVisitorAbstract
 
     public function leaveNode(Node $node)
     {
-        if ($node instanceof Assign && $node->var instanceof PropertyFetch && $node->var->var->name === 'this') {
-            $propName = $node->var->name->name;
-            if (!$this->isPrivateProperty($propName)) {
-                return $node;
-            }
-            return new MethodCall(new Variable('this'), '___propSet', [
-                new Node\Arg(new String_($propName)),
-                $node->expr
-            ]);
+        if ($node instanceof Assign && $this->propVisitorHelper->isPrivatePropertyFetch($this->class, $node->var)) {
+            return new MethodCall(
+                new Variable('this'),
+                '___propSet',
+                [new Arg(new String_($node->var->name->name)), $node->expr]
+            );
         }
     }
 }
